@@ -55,45 +55,80 @@ namespace Microsoft.Framework.PackageManager
 
         public bool ExecuteCommand()
         {
-            var sw = new Stopwatch();
-            sw.Start();
-
-            var restoreDirectory = RestoreDirectory ?? Directory.GetCurrentDirectory();
-
-            var projectJsonFiles = Directory.GetFiles(restoreDirectory, "project.json", SearchOption.AllDirectories);
-
-            var rootDirectory = ProjectResolver.ResolveRootDirectory(restoreDirectory);
-            ReadSettings(rootDirectory);
-
-            string packagesDirectory = PackageFolder;
-
-            if (string.IsNullOrEmpty(PackageFolder))
+            try
             {
-                packagesDirectory = NuGetDependencyResolver.ResolveRepositoryPath(rootDirectory);
-            }
+                var sw = new Stopwatch();
+                sw.Start();
 
-            var packagesFolderFileSystem = CreateFileSystem(packagesDirectory);
-            var pathResolver = new DefaultPackagePathResolver(packagesFolderFileSystem, useSideBySidePaths: true);
-            var localRepository = new LocalPackageRepository(pathResolver, packagesFolderFileSystem);
-
-            int restoreCount = 0;
-            int successCount = 0;
-            foreach (var projectJsonPath in projectJsonFiles)
-            {
-                restoreCount += 1;
-                var success = RestoreForProject(localRepository, projectJsonPath, rootDirectory, packagesDirectory).Result;
-                if (success)
+                // If the root argument is a project.json file
+                if (string.Equals(
+                    Project.ProjectFileName,
+                    Path.GetFileName(RestoreDirectory),
+                    StringComparison.OrdinalIgnoreCase))
                 {
-                    successCount += 1;
+                    RestoreDirectory = Path.GetDirectoryName(Path.GetFullPath(RestoreDirectory));
                 }
-            }
+                // If the root argument is a global.json file
+                else if (string.Equals(
+                    GlobalSettings.GlobalFileName,
+                    Path.GetFileName(RestoreDirectory),
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    GlobalJsonFile = RestoreDirectory;
+                    RestoreDirectory = Path.GetDirectoryName(Path.GetFullPath(RestoreDirectory));
+                }
+                else if (!Directory.Exists(RestoreDirectory) && !string.IsNullOrEmpty(RestoreDirectory))
+                {
+                    throw new InvalidOperationException("The given root is invalid.");
+                }
 
-            if (restoreCount > 1)
+                var restoreDirectory = RestoreDirectory ?? Directory.GetCurrentDirectory();
+
+                var projectJsonFiles = Directory.GetFiles(restoreDirectory, "project.json", SearchOption.AllDirectories);
+
+                var rootDirectory = ProjectResolver.ResolveRootDirectory(restoreDirectory);
+                ReadSettings(rootDirectory);
+
+                string packagesDirectory = PackageFolder;
+
+                if (string.IsNullOrEmpty(PackageFolder))
+                {
+                    packagesDirectory = NuGetDependencyResolver.ResolveRepositoryPath(rootDirectory);
+                }
+
+                var packagesFolderFileSystem = CreateFileSystem(packagesDirectory);
+                var pathResolver = new DefaultPackagePathResolver(packagesFolderFileSystem, useSideBySidePaths: true);
+                var localRepository = new LocalPackageRepository(pathResolver, packagesFolderFileSystem);
+
+                int restoreCount = 0;
+                int successCount = 0;
+                foreach (var projectJsonPath in projectJsonFiles)
+                {
+                    restoreCount += 1;
+                    var success = RestoreForProject(localRepository, projectJsonPath, rootDirectory, packagesDirectory).Result;
+                    if (success)
+                    {
+                        successCount += 1;
+                    }
+                }
+
+                if (restoreCount > 1)
+                {
+                    Reports.Information.WriteLine(string.Format("Total time {0}ms", sw.ElapsedMilliseconds));
+                }
+
+                return restoreCount == successCount;
+
+            }
+            catch (Exception ex)
             {
-                Reports.Information.WriteLine(string.Format("Total time {0}ms", sw.ElapsedMilliseconds));
+                Reports.Information.WriteLine("----------");
+                Reports.Information.WriteLine(ex.ToString());
+                Reports.Information.WriteLine("----------");
+                Reports.Information.WriteLine("Restore failed");
+                Reports.Information.WriteLine(ex.Message);
+                return false;
             }
-
-            return restoreCount == successCount;
         }
 
         private async Task<bool> RestoreForProject(LocalPackageRepository localRepository, string projectJsonPath, string rootDirectory, string packagesDirectory)
@@ -421,21 +456,7 @@ namespace Microsoft.Framework.PackageManager
 
         private void ReadSettings(string solutionDirectory)
         {
-            // Read the solution-level settings
-            var solutionSettingsFile = Path.Combine(
-                solutionDirectory,
-                NuGetConstants.NuGetSolutionSettingsFolder);
-            var fileSystem = CreateFileSystem(solutionSettingsFile);
-
-            if (NuGetConfigFile != null)
-            {
-                NuGetConfigFile = FileSystem.GetFullPath(NuGetConfigFile);
-            }
-
-            Settings = NuGet.Settings.LoadDefaultSettings(
-                fileSystem: fileSystem,
-                configFileName: NuGetConfigFile,
-                machineWideSettings: MachineWideSettings);
+            Settings = SettingsUtils.ReadSettings(solutionDirectory, NuGetConfigFile, FileSystem, MachineWideSettings);
 
             // Recreate the source provider and credential provider
             SourceProvider = PackageSourceBuilder.CreateSourceProvider(Settings);
