@@ -172,16 +172,8 @@ namespace Microsoft.Framework.PackageManager
                         packagesDirectory,
                         new EmptyFrameworkResolver())));
 
-            var allSources = SourceProvider.LoadPackageSources();
-
-            var enabledSources = Sources.Any() ?
-                Enumerable.Empty<PackageSource>() :
-                allSources.Where(s => s.IsEnabled);
-
-            var addedSources = Sources.Concat(FallbackSources).Select(
-                value => allSources.FirstOrDefault(source => CorrectName(value, source)) ?? new PackageSource(value));
-
-            var effectiveSources = enabledSources.Concat(addedSources).Distinct().ToList();
+            var effectiveSources = PackageSourceUtils.GetEffectivePackageSources(SourceProvider,
+                Sources, FallbackSources);
 
             foreach (var source in effectiveSources)
             {
@@ -426,13 +418,6 @@ namespace Microsoft.Framework.PackageManager
                 packOperations.ExtractNupkg(archive, targetPath);
             }
         }
-
-        private bool CorrectName(string value, PackageSource source)
-        {
-            return source.Name.Equals(value, StringComparison.CurrentCultureIgnoreCase) ||
-                source.Source.Equals(value, StringComparison.OrdinalIgnoreCase);
-        }
-
 
         void ForEach(IEnumerable<GraphNode> nodes, Action<GraphNode> callback)
         {

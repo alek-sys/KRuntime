@@ -3,7 +3,6 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using System.Collections.Generic;
 using Microsoft.Framework.Runtime;
 using Microsoft.Framework.PackageManager.Restore.NuGet;
@@ -39,7 +38,7 @@ namespace Microsoft.Framework.PackageManager
                 return false;
             }
 
-            // Load package sources from solution settings
+            // Create source provider from solution settings
             _addCommand.ProjectDir = _addCommand.ProjectDir ?? Directory.GetCurrentDirectory();
             var rootDir = ProjectResolver.ResolveRootDirectory(_addCommand.ProjectDir);
             var fileSystem = new PhysicalFileSystem(Directory.GetCurrentDirectory());
@@ -49,22 +48,15 @@ namespace Microsoft.Framework.PackageManager
                 machineWideSettings: new CommandLineMachineWideSettings());
             var sourceProvider = PackageSourceBuilder.CreateSourceProvider(settings);
 
-            var allSources = sourceProvider.LoadPackageSources();
-            var enabledSources = _restoreCommand.Sources.Any() ?
-                Enumerable.Empty<PackageSource>() :
-                allSources.Where(s => s.IsEnabled);
-
-            var addedSources = _restoreCommand.Sources.Concat(_restoreCommand.FallbackSources).Select(
-                value => allSources.FirstOrDefault(source => CorrectName(value, source)) ?? new PackageSource(value));
-
-            var effectiveSources = enabledSources.Concat(addedSources).Distinct().ToList();
+            var effectiveSources = PackageSourceUtils.GetEffectivePackageSources(sourceProvider,
+                _restoreCommand.Sources, _restoreCommand.FallbackSources);
 
             var packageFeeds = new List<IPackageFeed>();
             foreach (var source in effectiveSources)
             {
                 if (new Uri(source.Source).IsFile)
                 {
-                    packageFeeds.Add( new PackageFolder(source.Source, Report));
+                    packageFeeds.Add(new PackageFolder(source.Source, Report));
                 }
                 else
                 {
@@ -134,12 +126,5 @@ namespace Microsoft.Framework.PackageManager
             }
             return bestResult;
         }
-
-        private static bool CorrectName(string value, PackageSource source)
-        {
-            return source.Name.Equals(value, StringComparison.CurrentCultureIgnoreCase) ||
-                source.Source.Equals(value, StringComparison.OrdinalIgnoreCase);
-        }
-
     }
 }
