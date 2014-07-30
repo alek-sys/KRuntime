@@ -57,8 +57,7 @@ namespace Microsoft.Framework.PackageManager
         {
             try
             {
-                var sw = new Stopwatch();
-                sw.Start();
+                var sw = Stopwatch.StartNew();
 
                 // If the root argument is a project.json file
                 if (string.Equals(

@@ -22,7 +22,7 @@ namespace Microsoft.Framework.PackageManager
             _restoreCommand = restoreCmd;
         }
 
-        public IReport Report;
+        public IReport Report { get; set; }
 
         public bool ExecuteCommand()
         {
