@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.Framework.Runtime;
 using Microsoft.Framework.PackageManager.Restore.NuGet;
 using NuGet;
@@ -70,11 +71,11 @@ namespace Microsoft.Framework.PackageManager
             PackageInfo result = null;
             if (version == null)
             {
-                result = FindLatestVersion(packageFeeds, _addCommand.Name);
+                result = FindLatestVersion(packageFeeds, _addCommand.Name).Result;
             }
             else
             {
-                result = FindBestMatch(packageFeeds, _addCommand.Name, version);
+                result = FindBestMatch(packageFeeds, _addCommand.Name, version).Result;
             }
 
             if (result == null)
@@ -86,12 +87,12 @@ namespace Microsoft.Framework.PackageManager
             return _addCommand.ExecuteCommand() && _restoreCommand.ExecuteCommand();
         }
 
-        private static PackageInfo FindLatestVersion(IEnumerable<IPackageFeed> packageFeeds, string packageName)
+        private static async Task<PackageInfo> FindLatestVersion(IEnumerable<IPackageFeed> packageFeeds, string packageName)
         {
             PackageInfo latest = null;
             foreach (var feed in packageFeeds)
             {
-                var results = feed.FindPackagesByIdAsync(packageName).Result;
+                var results = await feed.FindPackagesByIdAsync(packageName);
                 foreach (var result in results)
                 {
                     if (latest == null)
@@ -106,13 +107,13 @@ namespace Microsoft.Framework.PackageManager
             return latest;
         }
 
-        private static PackageInfo FindBestMatch(IEnumerable<IPackageFeed> packageFeeds, string packageName,
+        private static async Task<PackageInfo> FindBestMatch(IEnumerable<IPackageFeed> packageFeeds, string packageName,
             SemanticVersion idealVersion)
         {
             PackageInfo bestResult = null;
             foreach (var feed in packageFeeds)
             {
-                var results = feed.FindPackagesByIdAsync(packageName).Result;
+                var results = await feed.FindPackagesByIdAsync(packageName);
                 foreach (var result in results)
                 {
                     if (VersionUtility.ShouldUseConsidering(
