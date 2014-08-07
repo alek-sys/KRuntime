@@ -60,8 +60,6 @@ namespace Microsoft.Framework.PackageManager
 
             var restoreDirectory = RestoreDirectory ?? Directory.GetCurrentDirectory();
 
-            var projectJsonFiles = Directory.GetFiles(restoreDirectory, "project.json", SearchOption.AllDirectories);
-
             var rootDirectory = ProjectResolver.ResolveRootDirectory(restoreDirectory);
             ReadSettings(rootDirectory);
 
@@ -81,6 +79,7 @@ namespace Microsoft.Framework.PackageManager
 
             if (string.IsNullOrEmpty(GlobalJsonFile))
             {
+                var projectJsonFiles = Directory.GetFiles(restoreDirectory, "project.json", SearchOption.AllDirectories);
                 foreach (var projectJsonPath in projectJsonFiles)
                 {
                     restoreCount += 1;
@@ -94,7 +93,7 @@ namespace Microsoft.Framework.PackageManager
             else
             {
                 restoreCount = 1;
-                var success = RestoreForGlobalJson(localRepository, rootDirectory, packagesDirectory).Result;
+                var success = RestoreFromGlobalJson(localRepository, rootDirectory, packagesDirectory).Result;
                 if (success)
                 {
                     successCount = 1;
@@ -213,7 +212,7 @@ namespace Microsoft.Framework.PackageManager
                 }
             });
 
-            await InstallItemsToPackageDir(installItems, packagesDirectory, preInstallCheck: (library, nupkgSHA) => true);
+            await InstallPackages(installItems, packagesDirectory, packageFilter: (library, nupkgSHA) => true);
 
             ScriptExecutor.Execute(project, "postrestore", getVariable);
 
@@ -234,7 +233,7 @@ namespace Microsoft.Framework.PackageManager
             return success;
         }
 
-        private async Task<bool> RestoreForGlobalJson(LocalPackageRepository localRepository, string rootDirectory, string packagesDirectory)
+        private async Task<bool> RestoreFromGlobalJson(LocalPackageRepository localRepository, string rootDirectory, string packagesDirectory)
         {
             var success = true;
 
@@ -315,7 +314,7 @@ namespace Microsoft.Framework.PackageManager
                 }
             }
 
-            await InstallItemsToPackageDir(installItems, packagesDirectory, preInstallCheck: (library, nupkgSHA) =>
+            await InstallPackages(installItems, packagesDirectory, packageFilter: (library, nupkgSHA) =>
             {
                 string expectedSHA = dependencies[library];
                 if (!string.Equals(expectedSHA, nupkgSHA, StringComparison.Ordinal))
@@ -334,7 +333,7 @@ namespace Microsoft.Framework.PackageManager
             return success;
         }
 
-        private async Task InstallItemsToPackageDir(List<GraphItem> installItems, string packagesDirectory, Func<Library, string, bool> preInstallCheck)
+        private async Task InstallPackages(List<GraphItem> installItems, string packagesDirectory, Func<Library, string, bool> packageFilter)
         {
             var packagePathResolver = new DefaultPackagePathResolver(packagesDirectory);
             using (var sha512 = SHA512.Create())
@@ -348,7 +347,7 @@ namespace Microsoft.Framework.PackageManager
                     memStream.Seek(0, SeekOrigin.Begin);
                     var nupkgSHA = Convert.ToBase64String(sha512.ComputeHash(memStream));
 
-                    bool shouldInstall = preInstallCheck(library, nupkgSHA);
+                    bool shouldInstall = packageFilter(library, nupkgSHA);
                     if (!shouldInstall)
                     {
                         continue;
