@@ -151,39 +151,10 @@ namespace Microsoft.Framework.PackageManager
                         packagesDirectory,
                         new EmptyFrameworkResolver())));
 
-            var allSources = SourceProvider.LoadPackageSources();
+            var effectiveSources = PackageSourceUtils.GetEffectivePackageSources(SourceProvider,
+                Sources, FallbackSources);
 
-            var enabledSources = Sources.Any() ?
-                Enumerable.Empty<PackageSource>() :
-                allSources.Where(s => s.IsEnabled);
-
-            var addedSources = Sources.Concat(FallbackSources).Select(
-                value => allSources.FirstOrDefault(source => CorrectName(value, source)) ?? new PackageSource(value));
-
-            var effectiveSources = enabledSources.Concat(addedSources).Distinct().ToList();
-
-            foreach (var source in effectiveSources)
-            {
-                if (new Uri(source.Source).IsFile)
-                {
-                    remoteProviders.Add(
-                        new RemoteWalkProvider(
-                            new PackageFolder(
-                                source.Source,
-                                Reports.Verbose)));
-                }
-                else
-                {
-                    remoteProviders.Add(
-                        new RemoteWalkProvider(
-                            new PackageFeed(
-                                source.Source,
-                                source.UserName,
-                                source.Password,
-                                NoCache,
-                                Reports.Verbose)));
-                }
-            }
+            AddRemoteProvidersFromSources(remoteProviders, effectiveSources);
 
             foreach (var configuration in project.GetTargetFrameworks())
             {
@@ -242,49 +213,7 @@ namespace Microsoft.Framework.PackageManager
                 }
             });
 
-            var packagePathResolver = new DefaultPackagePathResolver(packagesDirectory);
-            using (var sha512 = SHA512.Create())
-            {
-                foreach (var item in installItems)
-                {
-                    var library = item.Match.Library;
-
-                    var memStream = new MemoryStream();
-                    await item.Match.Provider.CopyToAsync(item.Match, memStream);
-                    memStream.Seek(0, SeekOrigin.Begin);
-                    var nupkgSHA = Convert.ToBase64String(sha512.ComputeHash(memStream));
-
-                    Reports.Information.WriteLine(string.Format("Installing {0} {1}", library.Name.Bold(), library.Version));
-
-                    var targetPath = packagePathResolver.GetInstallPath(library.Name, library.Version);
-                    var targetNupkg = packagePathResolver.GetPackageFilePath(library.Name, library.Version);
-                    var hashPath = packagePathResolver.GetHashPath(library.Name, library.Version);
-
-                    // Acquire the lock on a nukpg before we extract it to prevent the race condition when multiple
-                    // processes are extracting to the same destination simultaneously
-                    await ConcurrencyUtilities.ExecuteWithFileLocked(targetNupkg, async createdNewLock =>
-                    {
-                        // If this is the first process trying to install the target nupkg, go ahead
-                        // After this process successfully installs the package, all other processes
-                        // waiting on this lock don't need to install it again
-                        if (createdNewLock)
-                        {
-                            Directory.CreateDirectory(targetPath);
-                            using (var stream = new FileStream(targetNupkg, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
-                            {
-                                await item.Match.Provider.CopyToAsync(item.Match, stream);
-                                stream.Seek(0, SeekOrigin.Begin);
-
-                                ExtractPackage(targetPath, stream);
-                            }
-
-                            File.WriteAllText(hashPath, nupkgSHA);
-                        }
-
-                        return 0;
-                    });
-                }
-            }
+            await InstallItemsToPackageDir(installItems, packagesDirectory, preInstallCheck: (library, nupkgSHA) => true);
 
             ScriptExecutor.Execute(project, "postrestore", getVariable);
 
@@ -324,39 +253,10 @@ namespace Microsoft.Framework.PackageManager
                         packagesDirectory,
                         new EmptyFrameworkResolver())));
 
-            var allSources = SourceProvider.LoadPackageSources();
+            var effectiveSources = PackageSourceUtils.GetEffectivePackageSources(SourceProvider,
+                Sources, FallbackSources);
 
-            var enabledSources = Sources.Any() ?
-                Enumerable.Empty<PackageSource>() :
-                allSources.Where(s => s.IsEnabled);
-
-            var addedSources = Sources.Concat(FallbackSources).Select(
-                value => allSources.FirstOrDefault(source => CorrectName(value, source)) ?? new PackageSource(value));
-
-            var effectiveSources = enabledSources.Concat(addedSources).Distinct().ToList();
-
-            foreach (var source in effectiveSources)
-            {
-                if (new Uri(source.Source).IsFile)
-                {
-                    remoteProviders.Add(
-                        new RemoteWalkProvider(
-                            new PackageFolder(
-                                source.Source,
-                                Reports.Verbose)));
-                }
-                else
-                {
-                    remoteProviders.Add(
-                        new RemoteWalkProvider(
-                            new PackageFeed(
-                                source.Source,
-                                source.UserName,
-                                source.Password,
-                                NoCache,
-                                Reports.Verbose)));
-                }
-            }
+            AddRemoteProvidersFromSources(remoteProviders, effectiveSources);
 
             var context = new RestoreContext
             {
@@ -415,6 +315,27 @@ namespace Microsoft.Framework.PackageManager
                 }
             }
 
+            await InstallItemsToPackageDir(installItems, packagesDirectory, preInstallCheck: (library, nupkgSHA) =>
+            {
+                string expectedSHA = dependencies[library];
+                if (!string.Equals(expectedSHA, nupkgSHA, StringComparison.Ordinal))
+                {
+                    Reports.Information.WriteLine(
+                        string.Format("SHA of downloaded package {0} doesn't match expected value.".Red().Bold(),
+                        library.ToString()));
+                    success = false;
+                    return false;
+                }
+                return true;
+            });
+
+            Reports.Information.WriteLine(string.Format("{0}, {1}ms elapsed", "Restore complete".Green().Bold(), sw.ElapsedMilliseconds));
+
+            return success;
+        }
+
+        private async Task InstallItemsToPackageDir(List<GraphItem> installItems, string packagesDirectory, Func<Library, string, bool> preInstallCheck)
+        {
             var packagePathResolver = new DefaultPackagePathResolver(packagesDirectory);
             using (var sha512 = SHA512.Create())
             {
@@ -427,27 +348,10 @@ namespace Microsoft.Framework.PackageManager
                     memStream.Seek(0, SeekOrigin.Begin);
                     var nupkgSHA = Convert.ToBase64String(sha512.ComputeHash(memStream));
 
-                    string expectedSHA;
-                    if (dependencies.TryGetValue(library, out expectedSHA))
+                    bool shouldInstall = preInstallCheck(library, nupkgSHA);
+                    if (!shouldInstall)
                     {
-                        if (!string.Equals(expectedSHA, nupkgSHA, StringComparison.Ordinal))
-                        {
-                            Reports.Information.WriteLine(
-                                string.Format("SHA of downloaded package {0} doesn't match expected value.".Red().Bold(),
-                                library.ToString()));
-                            success = false;
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        // Report warnings only when given global.json contains "dependencies"
-                        if (dependenciesNode != null)
-                        {
-                            Reports.Information.WriteLine(
-                                string.Format("Expected SHA of package {0} doesn't exist in given global.json file.".Yellow().Bold(),
-                                library.ToString()));
-                        }
+                        continue;
                     }
 
                     Reports.Information.WriteLine(string.Format("Installing {0} {1}", library.Name.Bold(), library.Version));
@@ -481,10 +385,32 @@ namespace Microsoft.Framework.PackageManager
                     });
                 }
             }
+        }
 
-            Reports.Information.WriteLine(string.Format("{0}, {1}ms elapsed", "Restore complete".Green().Bold(), sw.ElapsedMilliseconds));
-
-            return success;
+        private void AddRemoteProvidersFromSources(List<IWalkProvider> remoteProviders, List<PackageSource> effectiveSources)
+        {
+            foreach (var source in effectiveSources)
+            {
+                if (new Uri(source.Source).IsFile)
+                {
+                    remoteProviders.Add(
+                        new RemoteWalkProvider(
+                            new PackageFolder(
+                                source.Source,
+                                Reports.Verbose)));
+                }
+                else
+                {
+                    remoteProviders.Add(
+                        new RemoteWalkProvider(
+                            new PackageFeed(
+                                source.Source,
+                                source.UserName,
+                                source.Password,
+                                NoCache,
+                                Reports.Verbose)));
+                }
+            }
         }
 
         private void PrintDependencyGraph(GraphNode root, FrameworkName frameworkName)
@@ -542,13 +468,6 @@ namespace Microsoft.Framework.PackageManager
                 packOperations.ExtractNupkg(archive, targetPath);
             }
         }
-
-        private bool CorrectName(string value, PackageSource source)
-        {
-            return source.Name.Equals(value, StringComparison.CurrentCultureIgnoreCase) ||
-                source.Source.Equals(value, StringComparison.OrdinalIgnoreCase);
-        }
-
 
         void ForEach(IEnumerable<GraphNode> nodes, Action<GraphNode> callback)
         {
