@@ -78,13 +78,26 @@ namespace Microsoft.Framework.PackageManager
 
             int restoreCount = 0;
             int successCount = 0;
-            foreach (var projectJsonPath in projectJsonFiles)
+
+            if (string.IsNullOrEmpty(GlobalJsonFile))
             {
-                restoreCount += 1;
-                var success = RestoreForProject(localRepository, projectJsonPath, rootDirectory, packagesDirectory).Result;
+                foreach (var projectJsonPath in projectJsonFiles)
+                {
+                    restoreCount += 1;
+                    var success = RestoreForProject(localRepository, projectJsonPath, rootDirectory, packagesDirectory).Result;
+                    if (success)
+                    {
+                        successCount += 1;
+                    }
+                }
+            }
+            else
+            {
+                restoreCount = 1;
+                var success = RestoreForGlobalJson(localRepository, rootDirectory, packagesDirectory).Result;
                 if (success)
                 {
-                    successCount += 1;
+                    successCount = 1;
                 }
             }
 
@@ -229,28 +242,6 @@ namespace Microsoft.Framework.PackageManager
                 }
             });
 
-            var dependencies = new Dictionary<Library, string>();
-
-            // If there is a global.json file specified, we should do SHA value verification
-            var globalJsonFileSpecified = !string.IsNullOrEmpty(GlobalJsonFile);
-            JToken dependenciesNode = null;
-            if (globalJsonFileSpecified)
-            {
-                var globalJson = JObject.Parse(File.ReadAllText(GlobalJsonFile));
-                dependenciesNode = globalJson["dependencies"];
-                if (dependenciesNode != null)
-                {
-                    dependencies = dependenciesNode
-                        .OfType<JProperty>()
-                        .ToDictionary(d => new Library()
-                        {
-                            Name = d.Name,
-                            Version = SemanticVersion.Parse(d.Value.Value<string>("version"))
-                        },
-                        d => d.Value.Value<string>("sha"));
-                }
-            }
-
             var packagePathResolver = new DefaultPackagePathResolver(packagesDirectory);
             using (var sha512 = SHA512.Create())
             {
@@ -262,29 +253,6 @@ namespace Microsoft.Framework.PackageManager
                     await item.Match.Provider.CopyToAsync(item.Match, memStream);
                     memStream.Seek(0, SeekOrigin.Begin);
                     var nupkgSHA = Convert.ToBase64String(sha512.ComputeHash(memStream));
-
-                    string expectedSHA;
-                    if (dependencies.TryGetValue(library, out expectedSHA))
-                    {
-                        if (!string.Equals(expectedSHA, nupkgSHA, StringComparison.Ordinal))
-                        {
-                            Reports.Information.WriteLine(
-                                string.Format("SHA of downloaded package {0} doesn't match expected value.".Red().Bold(),
-                                library.ToString()));
-                            success = false;
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        // Report warnings only when given global.json contains "dependencies"
-                        if (globalJsonFileSpecified && dependenciesNode != null)
-                        {
-                            Reports.Information.WriteLine(
-                                string.Format("Expected SHA of package {0} doesn't exist in given global.json file.".Yellow().Bold(),
-                                library.ToString()));
-                        }
-                    }
 
                     Reports.Information.WriteLine(string.Format("Installing {0} {1}", library.Name.Bold(), library.Version));
 
@@ -333,6 +301,188 @@ namespace Microsoft.Framework.PackageManager
                     PrintDependencyGraph(graphs[i], contexts[i].FrameworkName);
                 }
             }
+
+            return success;
+        }
+
+        private async Task<bool> RestoreForGlobalJson(LocalPackageRepository localRepository, string rootDirectory, string packagesDirectory)
+        {
+            var success = true;
+
+            Reports.Information.WriteLine(string.Format("Restoring packages for {0}", Path.GetFullPath(GlobalJsonFile).Bold()));
+
+            var sw = new Stopwatch();
+            sw.Start();
+
+            var restoreOperations = new RestoreOperations { Report = Reports.Information };
+            var localProviders = new List<IWalkProvider>();
+            var remoteProviders = new List<IWalkProvider>();
+
+            localProviders.Add(
+                new LocalWalkProvider(
+                    new NuGetDependencyResolver(
+                        packagesDirectory,
+                        new EmptyFrameworkResolver())));
+
+            var allSources = SourceProvider.LoadPackageSources();
+
+            var enabledSources = Sources.Any() ?
+                Enumerable.Empty<PackageSource>() :
+                allSources.Where(s => s.IsEnabled);
+
+            var addedSources = Sources.Concat(FallbackSources).Select(
+                value => allSources.FirstOrDefault(source => CorrectName(value, source)) ?? new PackageSource(value));
+
+            var effectiveSources = enabledSources.Concat(addedSources).Distinct().ToList();
+
+            foreach (var source in effectiveSources)
+            {
+                if (new Uri(source.Source).IsFile)
+                {
+                    remoteProviders.Add(
+                        new RemoteWalkProvider(
+                            new PackageFolder(
+                                source.Source,
+                                Reports.Verbose)));
+                }
+                else
+                {
+                    remoteProviders.Add(
+                        new RemoteWalkProvider(
+                            new PackageFeed(
+                                source.Source,
+                                source.UserName,
+                                source.Password,
+                                NoCache,
+                                Reports.Verbose)));
+                }
+            }
+
+            var context = new RestoreContext
+            {
+                FrameworkName = ApplicationEnvironment.TargetFramework,
+                ProjectLibraryProviders = new List<IWalkProvider>(),
+                LocalLibraryProviders = localProviders,
+                RemoteLibraryProviders = remoteProviders,
+            };
+
+            var dependencies = new Dictionary<Library, string>();
+            JToken dependenciesNode = null;
+            var globalJson = JObject.Parse(File.ReadAllText(GlobalJsonFile));
+            dependenciesNode = globalJson["dependencies"];
+            if (dependenciesNode != null)
+            {
+                dependencies = dependenciesNode
+                    .OfType<JProperty>()
+                    .ToDictionary(d => new Library()
+                    {
+                        Name = d.Name,
+                        Version = SemanticVersion.Parse(d.Value.Value<string>("version"))
+                    },
+                    d => d.Value.Value<string>("sha"));
+            }
+
+            var libsToRestore = new List<Library>(dependencies.Keys);
+            var tasks = new List<Task<GraphItem>>();
+            foreach (var lib in libsToRestore)
+            {
+                tasks.Add(restoreOperations.FindLibraryCached(context,
+                    new Library { Name = lib.Name, Version = lib.Version }));
+            }
+            var resolvedItems = await Task.WhenAll(tasks);
+
+            Reports.Information.WriteLine(string.Format("{0}, {1}ms elapsed", "Resolving complete".Green(),
+                sw.ElapsedMilliseconds));
+
+            var installItems = new List<GraphItem>();
+            var missingItems = new List<Library>();
+            for (int i = 0; i < resolvedItems.Length; i++)
+            {
+                var item = resolvedItems[i];
+                var lib = libsToRestore[i];
+                if (item == null || item.Match == null)
+                {
+                    missingItems.Add(lib);
+                    Reports.Information.WriteLine(string.Format("Unable to locate {0} >= {1}",
+                        lib.Name.Red().Bold(), lib.Version));
+                    success = false;
+                }
+                var isRemote = remoteProviders.Contains(item.Match.Provider);
+                var isAdded = installItems.Any(x => x.Match.Library == item.Match.Library);
+                if (!isAdded && isRemote)
+                {
+                    installItems.Add(item);
+                }
+            }
+
+            var packagePathResolver = new DefaultPackagePathResolver(packagesDirectory);
+            using (var sha512 = SHA512.Create())
+            {
+                foreach (var item in installItems)
+                {
+                    var library = item.Match.Library;
+
+                    var memStream = new MemoryStream();
+                    await item.Match.Provider.CopyToAsync(item.Match, memStream);
+                    memStream.Seek(0, SeekOrigin.Begin);
+                    var nupkgSHA = Convert.ToBase64String(sha512.ComputeHash(memStream));
+
+                    string expectedSHA;
+                    if (dependencies.TryGetValue(library, out expectedSHA))
+                    {
+                        if (!string.Equals(expectedSHA, nupkgSHA, StringComparison.Ordinal))
+                        {
+                            Reports.Information.WriteLine(
+                                string.Format("SHA of downloaded package {0} doesn't match expected value.".Red().Bold(),
+                                library.ToString()));
+                            success = false;
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        // Report warnings only when given global.json contains "dependencies"
+                        if (dependenciesNode != null)
+                        {
+                            Reports.Information.WriteLine(
+                                string.Format("Expected SHA of package {0} doesn't exist in given global.json file.".Yellow().Bold(),
+                                library.ToString()));
+                        }
+                    }
+
+                    Reports.Information.WriteLine(string.Format("Installing {0} {1}", library.Name.Bold(), library.Version));
+
+                    var targetPath = packagePathResolver.GetInstallPath(library.Name, library.Version);
+                    var targetNupkg = packagePathResolver.GetPackageFilePath(library.Name, library.Version);
+                    var hashPath = packagePathResolver.GetHashPath(library.Name, library.Version);
+
+                    // Acquire the lock on a nukpg before we extract it to prevent the race condition when multiple
+                    // processes are extracting to the same destination simultaneously
+                    await ConcurrencyUtilities.ExecuteWithFileLocked(targetNupkg, async createdNewLock =>
+                    {
+                        // If this is the first process trying to install the target nupkg, go ahead
+                        // After this process successfully installs the package, all other processes
+                        // waiting on this lock don't need to install it again
+                        if (createdNewLock)
+                        {
+                            Directory.CreateDirectory(targetPath);
+                            using (var stream = new FileStream(targetNupkg, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
+                            {
+                                await item.Match.Provider.CopyToAsync(item.Match, stream);
+                                stream.Seek(0, SeekOrigin.Begin);
+
+                                ExtractPackage(targetPath, stream);
+                            }
+
+                            File.WriteAllText(hashPath, nupkgSHA);
+                        }
+
+                        return 0;
+                    });
+                }
+            }
+
+            Reports.Information.WriteLine(string.Format("{0}, {1}ms elapsed", "Restore complete".Green().Bold(), sw.ElapsedMilliseconds));
 
             return success;
         }
@@ -448,6 +598,5 @@ namespace Microsoft.Framework.PackageManager
             path = FileSystem.GetFullPath(path);
             return new PhysicalFileSystem(path);
         }
-
     }
 }
