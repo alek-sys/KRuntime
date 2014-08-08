@@ -16,12 +16,12 @@ namespace Microsoft.Framework.Runtime.Roslyn
 {
     public class RoslynCompiler
     {
-        private readonly IFileWatcher _watcher;
+        private readonly ICache _cache;
         private readonly MetadataFileReferenceFactory _metadataFileReferenceFactory;
 
-        public RoslynCompiler(IFileWatcher watcher)
+        public RoslynCompiler(ICache cache)
         {
-            _watcher = watcher;
+            _cache = cache;
             _metadataFileReferenceFactory = new MetadataFileReferenceFactory();
         }
 
@@ -36,21 +36,21 @@ namespace Microsoft.Framework.Runtime.Roslyn
             var path = project.ProjectDirectory;
             var name = project.Name;
 
-            _watcher.WatchProject(path);
+            // _watcher.WatchProject(path);
 
-            _watcher.WatchFile(project.ProjectFilePath);
+            // _watcher.WatchFile(project.ProjectFilePath);
 
             var exportedReferences = incomingReferences.Select(ConvertMetadataReference);
 
             Trace.TraceInformation("[{0}]: Compiling '{1}'", GetType().Name, name);
             var sw = Stopwatch.StartNew();
 
-            _watcher.WatchDirectory(path, ".cs");
+            //_watcher.WatchDirectory(path, ".cs");
 
-            foreach (var directory in Directory.EnumerateDirectories(path, "*.*", SearchOption.AllDirectories))
-            {
-                _watcher.WatchDirectory(directory, ".cs");
-            }
+            //foreach (var directory in Directory.EnumerateDirectories(path, "*.*", SearchOption.AllDirectories))
+            //{
+            //    _watcher.WatchDirectory(directory, ".cs");
+            //}
 
             var compilationSettings = project.GetCompilationSettings(targetFramework, configuration);
 
@@ -130,7 +130,7 @@ namespace Microsoft.Framework.Runtime.Roslyn
 
             foreach (var sourcePath in project.SourceFiles)
             {
-                _watcher.WatchFile(sourcePath);
+                //_watcher.WatchFile(sourcePath);
 
                 var syntaxTree = CreateSyntaxTree(sourcePath, parseOptions);
 
@@ -141,7 +141,7 @@ namespace Microsoft.Framework.Runtime.Roslyn
             {
                 var sourcePath = sourceFileReference.Path;
 
-                _watcher.WatchFile(sourcePath);
+                //_watcher.WatchFile(sourcePath);
 
                 var syntaxTree = CreateSyntaxTree(sourcePath, parseOptions);
 
@@ -151,14 +151,19 @@ namespace Microsoft.Framework.Runtime.Roslyn
             return trees;
         }
 
-        private static SyntaxTree CreateSyntaxTree(string sourcePath, CSharpParseOptions parseOptions)
+        private SyntaxTree CreateSyntaxTree(string sourcePath, CSharpParseOptions parseOptions)
         {
-            using (var stream = File.OpenRead(sourcePath))
+            return _cache.Get<SyntaxTree>(sourcePath, ctx =>
             {
-                var sourceText = SourceText.From(stream, encoding: Encoding.UTF8);
+                ctx.Monitor(new FileWriteTimeChangedToken(sourcePath));
 
-                return CSharpSyntaxTree.ParseText(sourceText, options: parseOptions, path: sourcePath);
-            }
+                using (var stream = File.OpenRead(sourcePath))
+                {
+                    var sourceText = SourceText.From(stream, encoding: Encoding.UTF8);
+
+                    return CSharpSyntaxTree.ParseText(sourceText, options: parseOptions, path: sourcePath);
+                }
+            });
         }
 
         private MetadataReference ConvertMetadataReference(IMetadataReference metadataReference)
@@ -181,7 +186,7 @@ namespace Microsoft.Framework.Runtime.Roslyn
 
             if (fileMetadataReference != null)
             {
-                return _metadataFileReferenceFactory.GetMetadataReference(fileMetadataReference.Path);
+                return GetMetadataReference(fileMetadataReference.Path);
             }
 
             var projectReference = metadataReference as IMetadataProjectReference;
@@ -198,6 +203,19 @@ namespace Microsoft.Framework.Runtime.Roslyn
             }
 
             throw new NotSupportedException();
+        }
+
+        private MetadataReference GetMetadataReference(string path)
+        {
+            return _cache.Get<MetadataReference>(path, ctx =>
+            {
+                ctx.Monitor(new FileWriteTimeChangedToken(path));
+
+                using (var stream = File.OpenRead(path))
+                {
+                    return new MetadataImageReference(stream);
+                }
+            });
         }
     }
 }
