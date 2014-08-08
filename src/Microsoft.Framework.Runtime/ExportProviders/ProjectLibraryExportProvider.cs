@@ -28,8 +28,24 @@ namespace Microsoft.Framework.Runtime
         {
             get
             {
-                return _lastWriteTime <= File.GetLastWriteTime(_path);
+                return _lastWriteTime >= File.GetLastWriteTime(_path);
             }
+        }
+
+        public override string ToString()
+        {
+            return _path + " (iscurret: " + IsCurrent + ")";
+        }
+
+        public override bool Equals(object obj)
+        {
+            var tk = obj as FileWriteTimeChangedToken;
+            return tk != null && tk._path.Equals(_path);
+        }
+
+        public override int GetHashCode()
+        {
+            return _path.GetHashCode();
         }
     }
 
@@ -153,7 +169,7 @@ namespace Microsoft.Framework.Runtime
                 _accessor.Current = parentContext;
             }
 
-            // entry.CompactTokens();
+            entry.Tokens = entry.Tokens.Distinct().ToList();
             return entry;
         }
 

@@ -17,12 +17,12 @@ namespace Microsoft.Framework.Runtime.Roslyn
     public class RoslynCompiler
     {
         private readonly ICache _cache;
-        private readonly MetadataFileReferenceFactory _metadataFileReferenceFactory;
+        private readonly IFileWatcher _watcher;
 
-        public RoslynCompiler(ICache cache)
+        public RoslynCompiler(ICache cache, IFileWatcher watcher)
         {
             _cache = cache;
-            _metadataFileReferenceFactory = new MetadataFileReferenceFactory();
+            _watcher = watcher;
         }
 
         public CompilationContext CompileProject(
@@ -36,21 +36,21 @@ namespace Microsoft.Framework.Runtime.Roslyn
             var path = project.ProjectDirectory;
             var name = project.Name;
 
-            // _watcher.WatchProject(path);
+            _watcher.WatchProject(path);
 
-            // _watcher.WatchFile(project.ProjectFilePath);
+            _watcher.WatchFile(project.ProjectFilePath);
 
             var exportedReferences = incomingReferences.Select(ConvertMetadataReference);
 
             Trace.TraceInformation("[{0}]: Compiling '{1}'", GetType().Name, name);
             var sw = Stopwatch.StartNew();
 
-            //_watcher.WatchDirectory(path, ".cs");
+            _watcher.WatchDirectory(path, ".cs");
 
-            //foreach (var directory in Directory.EnumerateDirectories(path, "*.*", SearchOption.AllDirectories))
-            //{
-            //    _watcher.WatchDirectory(directory, ".cs");
-            //}
+            foreach (var directory in Directory.EnumerateDirectories(path, "*.*", SearchOption.AllDirectories))
+            {
+                _watcher.WatchDirectory(directory, ".cs");
+            }
 
             var compilationSettings = project.GetCompilationSettings(targetFramework, configuration);
 
@@ -130,7 +130,7 @@ namespace Microsoft.Framework.Runtime.Roslyn
 
             foreach (var sourcePath in project.SourceFiles)
             {
-                //_watcher.WatchFile(sourcePath);
+                _watcher.WatchFile(sourcePath);
 
                 var syntaxTree = CreateSyntaxTree(sourcePath, parseOptions);
 
@@ -141,7 +141,7 @@ namespace Microsoft.Framework.Runtime.Roslyn
             {
                 var sourcePath = sourceFileReference.Path;
 
-                //_watcher.WatchFile(sourcePath);
+                _watcher.WatchFile(sourcePath);
 
                 var syntaxTree = CreateSyntaxTree(sourcePath, parseOptions);
 
