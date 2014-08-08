@@ -49,6 +49,8 @@ namespace Microsoft.Framework.Runtime
                 NuGetDependencyProvider
             });
 
+            var cache = new Cache();
+
             // Default services
             _serviceProvider.Add(typeof(ILibraryExportProvider), compositeDependencyExporter);
             _serviceProvider.Add(typeof(IProjectResolver), ProjectResolver);
@@ -56,8 +58,8 @@ namespace Microsoft.Framework.Runtime
 
             _serviceProvider.Add(typeof(NuGetDependencyResolver), NuGetDependencyProvider);
             _serviceProvider.Add(typeof(ProjectReferenceDependencyProvider), ProjectDepencyProvider);
-            _serviceProvider.Add(typeof(ILibraryManager), new LibraryManager(targetFramework, configuration, DependencyWalker, compositeDependencyExporter));
-            _serviceProvider.Add(typeof(ICache), new Cache());
+            _serviceProvider.Add(typeof(ILibraryManager), new LibraryManager(targetFramework, configuration, DependencyWalker, compositeDependencyExporter, cache));
+            _serviceProvider.Add(typeof(ICache), cache);
         }
 
         public void AddService(Type type, object instance)
