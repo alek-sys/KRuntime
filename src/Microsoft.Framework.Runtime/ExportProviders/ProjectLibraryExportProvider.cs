@@ -119,10 +119,10 @@ namespace Microsoft.Framework.Runtime
         public object Get(object key, Func<CacheContext, object> factory)
         {
             var entry = _entries.AddOrUpdate(key,
-                k => CreateEntry(k, factory),
+                k => AddEntry(k, factory),
                 (k, oldValue) => UpdateEntry(oldValue, k, factory));
 
-            return entry.Value;
+            return entry.Result;
         }
 
         private CacheEntry AddEntry(object k, Func<CacheContext, object> acquire)
@@ -134,7 +134,7 @@ namespace Microsoft.Framework.Runtime
 
         private CacheEntry UpdateEntry(CacheEntry currentEntry, object k, Func<CacheContext, object> acquire)
         {
-            bool expired = currentEntry.Tokens.Any(t => !t.HasChanged);
+            bool expired = currentEntry.Tokens.Any(t => t.HasChanged);
 
             CacheEntry entry = null;
             if (expired)
@@ -167,7 +167,6 @@ namespace Microsoft.Framework.Runtime
         {
             var entry = new CacheEntry();
             var context = new CacheContext(k, entry.AddToken);
-
             CacheContext parentContext = null;
             try
             {
@@ -175,7 +174,7 @@ namespace Microsoft.Framework.Runtime
                 parentContext = _accessor.Current;
                 _accessor.Current = context;
 
-                entry.Value = acquire(context);
+                entry.Result = acquire(context);
             }
             finally
             {
@@ -183,10 +182,9 @@ namespace Microsoft.Framework.Runtime
                 _accessor.Current = parentContext;
             }
 
-            entry.CompactTokens();
-
             Trace.TraceInformation("[{0}]: Cache miss for {1}", GetType().Name, k);
 
+            entry.CompactTokens();
             return entry;
         }
 
@@ -201,7 +199,7 @@ namespace Microsoft.Framework.Runtime
 
             public IEnumerable<IToken> Tokens { get { return _tokens ?? Enumerable.Empty<IToken>(); } }
 
-            public object Value { get; set; }
+            public object Result { get; set; }
 
             public void AddToken(IToken token)
             {
@@ -216,7 +214,9 @@ namespace Microsoft.Framework.Runtime
             public void CompactTokens()
             {
                 if (_tokens != null)
+                {
                     _tokens = _tokens.Distinct().ToArray();
+                }
             }
         }
     }
