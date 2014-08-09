@@ -108,7 +108,9 @@ namespace Microsoft.Framework.PackageManager
 
                     var configurationSuccess = true;
 
-                    baseOutputPath = Path.Combine(baseOutputPath, configuration);
+                    var configurationOutputPath = Path.Combine(
+                        baseOutputPath, 
+                        configuration);
 
                     // Build all target frameworks a project supports
                     foreach (var targetFramework in frameworks)
@@ -116,7 +118,7 @@ namespace Microsoft.Framework.PackageManager
                         var errors = new List<string>();
                         var warnings = new List<string>();
 
-                        var context = new BuildContext(project, targetFramework, configuration, baseOutputPath);
+                        var context = new BuildContext(project, targetFramework, configuration, configurationOutputPath);
                         context.Initialize();
 
                         if (_buildOptions.CheckDiagnostics)
@@ -153,8 +155,8 @@ namespace Microsoft.Framework.PackageManager
                     }
 
                     // Create a package per configuration
-                    string nupkg = GetPackagePath(project, baseOutputPath);
-                    string symbolsNupkg = GetPackagePath(project, baseOutputPath, symbols: true);
+                    string nupkg = GetPackagePath(project, configurationOutputPath);
+                    string symbolsNupkg = GetPackagePath(project, configurationOutputPath, symbols: true);
 
                     if (configurationSuccess)
                     {
