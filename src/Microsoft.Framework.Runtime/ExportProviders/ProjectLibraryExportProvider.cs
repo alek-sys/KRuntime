@@ -12,7 +12,6 @@ using System.Runtime.Versioning;
 
 namespace Microsoft.Framework.Runtime
 {
-
     public class FileWriteTimeChangedToken : IToken
     {
         private readonly string _path;
@@ -24,23 +23,23 @@ namespace Microsoft.Framework.Runtime
             _lastWriteTime = File.GetLastWriteTime(path);
         }
 
-        public bool IsCurrent
+        public bool HasChanged
         {
             get
             {
-                return _lastWriteTime >= File.GetLastWriteTime(_path);
+                return _lastWriteTime < File.GetLastWriteTime(_path);
             }
         }
 
         public override string ToString()
         {
-            return _path + " (iscurret: " + IsCurrent + ")";
+            return _path;
         }
 
         public override bool Equals(object obj)
         {
-            var tk = obj as FileWriteTimeChangedToken;
-            return tk != null && tk._path.Equals(_path);
+            var token = obj as FileWriteTimeChangedToken;
+            return token != null && token._path.Equals(_path, StringComparison.OrdinalIgnoreCase);
         }
 
         public override int GetHashCode()
@@ -51,7 +50,7 @@ namespace Microsoft.Framework.Runtime
 
     public interface IToken
     {
-        bool IsCurrent { get; }
+        bool HasChanged { get; }
     }
 
     public interface ICache
@@ -61,10 +60,13 @@ namespace Microsoft.Framework.Runtime
 
     public class CacheContext
     {
+        public object Key { get; private set; }
+
         public Action<IToken> Monitor { get; private set; }
 
-        public CacheContext(Action<IToken> monitor)
+        public CacheContext(object key, Action<IToken> monitor)
         {
+            Key = key;
             Monitor = monitor;
         }
     }
@@ -132,7 +134,19 @@ namespace Microsoft.Framework.Runtime
 
         private CacheEntry UpdateEntry(CacheEntry currentEntry, object k, Func<CacheContext, object> acquire)
         {
-            var entry = (currentEntry.Tokens.Any(t => !t.IsCurrent)) ? CreateEntry(k, acquire) : currentEntry;
+            bool expired = currentEntry.Tokens.Any(t => !t.HasChanged);
+
+            CacheEntry entry = null;
+            if (expired)
+            {
+                entry = CreateEntry(k, acquire);
+            }
+            else
+            {
+                Trace.TraceInformation("[{0}]: Cache hit for {1}", GetType().Name, k);
+                entry = currentEntry;
+            }
+
             PropagateTokens(entry);
             return entry;
         }
@@ -152,7 +166,7 @@ namespace Microsoft.Framework.Runtime
         private CacheEntry CreateEntry(object k, Func<CacheContext, object> acquire)
         {
             var entry = new CacheEntry();
-            var context = new CacheContext(entry.Tokens.Add);
+            var context = new CacheContext(k, entry.AddToken);
 
             CacheContext parentContext = null;
             try
@@ -169,14 +183,41 @@ namespace Microsoft.Framework.Runtime
                 _accessor.Current = parentContext;
             }
 
-            entry.Tokens = entry.Tokens.Distinct().ToList();
+            entry.CompactTokens();
+
+            Trace.TraceInformation("[{0}]: Cache miss for {1}", GetType().Name, k);
+
             return entry;
         }
 
         private class CacheEntry
         {
-            public IList<IToken> Tokens = new List<IToken>();
-            public object Value;
+            private IList<IToken> _tokens;
+
+            public CacheEntry()
+            {
+
+            }
+
+            public IEnumerable<IToken> Tokens { get { return _tokens ?? Enumerable.Empty<IToken>(); } }
+
+            public object Value { get; set; }
+
+            public void AddToken(IToken token)
+            {
+                if (_tokens == null)
+                {
+                    _tokens = new List<IToken>();
+                }
+
+                _tokens.Add(token);
+            }
+
+            public void CompactTokens()
+            {
+                if (_tokens != null)
+                    _tokens = _tokens.Distinct().ToArray();
+            }
         }
     }
 
@@ -215,60 +256,60 @@ namespace Microsoft.Framework.Runtime
             var cache = (ICache)_serviceProvider.GetService(typeof(ICache));
 
             return cache.Get<ILibraryExport>(key, ctx =>
-           {
-               // Get the composite library export provider
-               var exportProvider = (ILibraryExportProvider)_serviceProvider.GetService(typeof(ILibraryExportProvider));
-               var libraryManager = (ILibraryManager)_serviceProvider.GetService(typeof(ILibraryManager));
+            {
+                // Get the composite library export provider
+                var exportProvider = (ILibraryExportProvider)_serviceProvider.GetService(typeof(ILibraryExportProvider));
+                var libraryManager = (ILibraryManager)_serviceProvider.GetService(typeof(ILibraryManager));
 
-               // Get the exports for the project dependencies
-               ILibraryExport projectExport = ProjectExportProviderHelper.GetExportsRecursive(
-                  libraryManager,
-                  exportProvider,
-                  project.Name,
-                  targetFramework,
-                  configuration,
-                  dependenciesOnly: true);
+                // Get the exports for the project dependencies
+                ILibraryExport projectExport = ProjectExportProviderHelper.GetExportsRecursive(
+                   libraryManager,
+                   exportProvider,
+                   project.Name,
+                   targetFramework,
+                   configuration,
+                   dependenciesOnly: true);
 
-               var metadataReferences = new List<IMetadataReference>();
-               var sourceReferences = new List<ISourceReference>();
+                var metadataReferences = new List<IMetadataReference>();
+                var sourceReferences = new List<ISourceReference>();
 
-               if (!string.IsNullOrEmpty(targetFrameworkInformation.AssemblyPath))
-               {
-                   var assemblyPath = ResolvePath(project, configuration, targetFrameworkInformation.AssemblyPath);
-                   var pdbPath = ResolvePath(project, configuration, targetFrameworkInformation.PdbPath);
+                if (!string.IsNullOrEmpty(targetFrameworkInformation.AssemblyPath))
+                {
+                    var assemblyPath = ResolvePath(project, configuration, targetFrameworkInformation.AssemblyPath);
+                    var pdbPath = ResolvePath(project, configuration, targetFrameworkInformation.PdbPath);
 
-                   metadataReferences.Add(new CompiledProjectMetadataReference(project, assemblyPath, pdbPath));
-               }
-               else
-               {
-                   // Find the default project exporter
-                   var projectReferenceProvider = _projectReferenceProviders.GetOrAdd(project.LanguageServices.ProjectReferenceProvider, typeInfo =>
-                  {
-                      return LanguageServices.CreateService<IProjectReferenceProvider>(_serviceProvider, typeInfo);
-                  });
-
-                   Trace.TraceInformation("[{0}]: GetProjectReference({1}, {2}, {3})", project.LanguageServices.ProjectReferenceProvider.TypeName, name, targetFramework, configuration);
-
-                   // Resolve the project export
-                   IMetadataProjectReference projectReference = projectReferenceProvider.GetProjectReference(
-                      project,
-                      targetFramework,
-                      configuration,
-                      projectExport.MetadataReferences,
-                      projectExport.SourceReferences,
-                      metadataReferences);
-
-                   metadataReferences.Add(projectReference);
-
-                   // Shared sources
-                   foreach (var sharedFile in project.SharedFiles)
+                    metadataReferences.Add(new CompiledProjectMetadataReference(project, assemblyPath, pdbPath));
+                }
+                else
+                {
+                    // Find the default project exporter
+                    var projectReferenceProvider = _projectReferenceProviders.GetOrAdd(project.LanguageServices.ProjectReferenceProvider, typeInfo =>
                    {
-                       sourceReferences.Add(new SourceFileReference(sharedFile));
-                   }
-               }
+                       return LanguageServices.CreateService<IProjectReferenceProvider>(_serviceProvider, typeInfo);
+                   });
 
-               return new LibraryExport(metadataReferences, sourceReferences);
-           });
+                    Trace.TraceInformation("[{0}]: GetProjectReference({1}, {2}, {3})", project.LanguageServices.ProjectReferenceProvider.TypeName, name, targetFramework, configuration);
+
+                    // Resolve the project export
+                    IMetadataProjectReference projectReference = projectReferenceProvider.GetProjectReference(
+                       project,
+                       targetFramework,
+                       configuration,
+                       projectExport.MetadataReferences,
+                       projectExport.SourceReferences,
+                       metadataReferences);
+
+                    metadataReferences.Add(projectReference);
+
+                    // Shared sources
+                    foreach (var sharedFile in project.SharedFiles)
+                    {
+                        sourceReferences.Add(new SourceFileReference(sharedFile));
+                    }
+                }
+
+                return new LibraryExport(metadataReferences, sourceReferences);
+            });
         }
 
         private static string ResolvePath(Project project, string configuration, string path)
