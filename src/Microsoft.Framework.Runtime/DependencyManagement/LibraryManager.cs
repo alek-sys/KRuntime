@@ -13,7 +13,6 @@ namespace Microsoft.Framework.Runtime
         private readonly FrameworkName _targetFramework;
         private readonly string _configuration;
         private readonly ILibraryExportProvider _libraryExportProvider;
-        private readonly ICache _cache;
         private readonly Func<IEnumerable<ILibraryInformation>> _libraryInfoThunk;
         private readonly object _initializeLock = new object();
         private Dictionary<string, IEnumerable<ILibraryInformation>> _inverse;
@@ -23,27 +22,23 @@ namespace Microsoft.Framework.Runtime
         public LibraryManager(FrameworkName targetFramework,
                               string configuration,
                               DependencyWalker dependencyWalker,
-                              ILibraryExportProvider libraryExportProvider,
-                              ICache cache)
+                              ILibraryExportProvider libraryExportProvider)
             : this(targetFramework,
                    configuration,
                    GetLibraryInfoThunk(dependencyWalker),
-                   libraryExportProvider,
-                   cache)
+                   libraryExportProvider)
         {
         }
 
         public LibraryManager(FrameworkName targetFramework,
                               string configuration,
                               Func<IEnumerable<ILibraryInformation>> libraryInfoThunk,
-                              ILibraryExportProvider libraryExportProvider,
-                              ICache cache)
+                              ILibraryExportProvider libraryExportProvider)
         {
             _targetFramework = targetFramework;
             _configuration = configuration;
             _libraryInfoThunk = libraryInfoThunk;
             _libraryExportProvider = libraryExportProvider;
-            _cache = cache;
         }
 
         private Dictionary<string, ILibraryInformation> LibraryLookup
@@ -96,7 +91,6 @@ namespace Microsoft.Framework.Runtime
             return ProjectExportProviderHelper.GetExportsRecursive(
                 this,
                 _libraryExportProvider,
-                _cache,
                 name,
                 _targetFramework,
                 _configuration,

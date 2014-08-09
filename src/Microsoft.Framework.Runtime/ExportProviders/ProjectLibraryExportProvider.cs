@@ -39,8 +39,8 @@ namespace Microsoft.Framework.Runtime
 
         public override bool Equals(object obj)
         {
-            var token = obj as FileWriteTimeChangedToken;
-            return token != null && token._path.Equals(_path);
+            var tk = obj as FileWriteTimeChangedToken;
+            return tk != null && tk._path.Equals(_path);
         }
 
         public override int GetHashCode()
@@ -224,7 +224,6 @@ namespace Microsoft.Framework.Runtime
                ILibraryExport projectExport = ProjectExportProviderHelper.GetExportsRecursive(
                   libraryManager,
                   exportProvider,
-                  cache,
                   project.Name,
                   targetFramework,
                   configuration,

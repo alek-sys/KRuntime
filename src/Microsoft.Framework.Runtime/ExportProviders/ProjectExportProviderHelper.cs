@@ -17,7 +17,6 @@ namespace Microsoft.Framework.Runtime
         public static ILibraryExport GetExportsRecursive(
             ILibraryManager manager,
             ILibraryExportProvider libraryExportProvider,
-            ICache cache,
             string name,
             FrameworkName targetFramework,
             string configuration,
@@ -66,12 +65,12 @@ namespace Microsoft.Framework.Runtime
                         if (node.Parent == rootNode)
                         {
                             // Only export sources from first level dependencies
-                            ProcessExport(cache, libraryExport, references, sourceReferences);
+                            ProcessExport(libraryExport, references, sourceReferences);
                         }
                         else
                         {
                             // Skip source exports from anything else
-                            ProcessExport(cache, libraryExport, references, sourceReferences: null);
+                            ProcessExport(libraryExport, references, sourceReferences: null);
                         }
                     }
                 }
@@ -100,14 +99,13 @@ namespace Microsoft.Framework.Runtime
                 sourceReferences.Values.ToList());
         }
 
-        private static void ProcessExport(ICache cache,
-                                          ILibraryExport export,
+        private static void ProcessExport(ILibraryExport export,
                                           IDictionary<string, IMetadataReference> metadataReferences,
                                           IDictionary<string, ISourceReference> sourceReferences)
         {
             var references = new List<IMetadataReference>(export.MetadataReferences);
 
-            ExpandEmbeddedReferences(cache, references);
+            ExpandEmbeddedReferences(references);
 
             foreach (var reference in references)
             {
@@ -123,7 +121,7 @@ namespace Microsoft.Framework.Runtime
             }
         }
 
-        private static void ExpandEmbeddedReferences(ICache cache, IList<IMetadataReference> references)
+        private static void ExpandEmbeddedReferences(IList<IMetadataReference> references)
         {
             var otherReferences = new List<IMetadataReference>();
 
@@ -133,20 +131,11 @@ namespace Microsoft.Framework.Runtime
 
                 if (fileReference != null)
                 {
-                    var key = "ANI_" + fileReference.Path;
-
-                    var embeddedReferences = cache.Get<IList<IMetadataEmbeddedReference>>(key, ctx =>
+                    using (var fileStream = File.OpenRead(fileReference.Path))
+                    using (var reader = new PEReader(fileStream))
                     {
-                        ctx.Monitor(new FileWriteTimeChangedToken(fileReference.Path));
-
-                        using (var fileStream = File.OpenRead(fileReference.Path))
-                        using (var reader = new PEReader(fileStream))
-                        {
-                            return reader.GetEmbeddedReferences();
-                        }
-                    });
-
-                    otherReferences.AddRange(embeddedReferences);
+                        otherReferences.AddRange(reader.GetEmbeddedReferences());
+                    }
                 }
             }
 
