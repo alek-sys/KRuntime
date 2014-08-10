@@ -104,7 +104,7 @@ namespace Microsoft.Framework.Runtime
 
     public class Cache : ICache
     {
-        private readonly ConcurrentDictionary<object, CacheEntry> _entries = new ConcurrentDictionary<object, CacheEntry>();
+        private readonly ConcurrentDictionary<object, Lazy<CacheEntry>> _entries = new ConcurrentDictionary<object, Lazy<CacheEntry>>();
         private readonly ICacheContextAccessor _accessor;
 
         public Cache() : this(new CacheContextAccessor())
@@ -122,33 +122,35 @@ namespace Microsoft.Framework.Runtime
                 k => AddEntry(k, factory),
                 (k, oldValue) => UpdateEntry(oldValue, k, factory));
 
-            return entry.Result;
+            return entry.Value.Result;
         }
 
-        private CacheEntry AddEntry(object k, Func<CacheContext, object> acquire)
+        private Lazy<CacheEntry> AddEntry(object k, Func<CacheContext, object> acquire)
         {
-            var entry = CreateEntry(k, acquire);
-            PropagateTokens(entry);
-            return entry;
+            return new Lazy<CacheEntry>(() =>
+            {
+                var entry = CreateEntry(k, acquire);
+                PropagateTokens(entry);
+                return entry;
+            });
         }
 
-        private CacheEntry UpdateEntry(CacheEntry currentEntry, object k, Func<CacheContext, object> acquire)
+        private Lazy<CacheEntry> UpdateEntry(Lazy<CacheEntry> currentEntry, object k, Func<CacheContext, object> acquire)
         {
-            bool expired = currentEntry.Tokens.Any(t => t.HasChanged);
+            bool expired = currentEntry.Value.Tokens.Any(t => t.HasChanged);
 
-            CacheEntry entry = null;
             if (expired)
             {
-                entry = CreateEntry(k, acquire);
+                return AddEntry(k, acquire);
             }
             else
             {
                 Trace.TraceInformation("[{0}]: Cache hit for {1}", GetType().Name, k);
-                entry = currentEntry;
-            }
 
-            PropagateTokens(entry);
-            return entry;
+                // Already evaluated
+                PropagateTokens(currentEntry.Value);
+                return currentEntry;
+            }
         }
 
         private void PropagateTokens(CacheEntry entry)
