@@ -78,6 +78,7 @@
     <Compile Include="Scripts\ScriptExecutor.cs" />
     <Compile Include="Shims\ListExtensions.cs" />
     <Compile Include="Shims\ProtectedData.cs" />
+    <Compile Include="Utils\PackageSourceUtils.cs" />
     <Compile Include="Utils\SettingsUtils.cs" />
   </ItemGroup>
   <ItemGroup>
