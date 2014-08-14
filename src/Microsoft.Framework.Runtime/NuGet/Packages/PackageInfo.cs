@@ -9,11 +9,12 @@ namespace NuGet
         private readonly string _versionDir;
         private IPackage _package;
 
-        public PackageInfo(IFileSystem repositoryRoot, string packageId, SemanticVersion version, string versionDir)
+        public PackageInfo(IFileSystem repositoryRoot, string packageId, SemanticVersion version, string configuration, string versionDir)
         {
             _repositoryRoot = repositoryRoot;
             Id = packageId;
             Version = version;
+            Configuration = configuration;
             _versionDir = versionDir;
         }
 
@@ -21,13 +22,15 @@ namespace NuGet
 
         public SemanticVersion Version { get; private set; }
 
+        public string Configuration { get; private set; }
+
         public IPackage Package
         {
             get
             {
                 if (_package == null)
                 {
-                    var nuspecPath = Path.Combine(_versionDir, string.Format("{0}.nuspec", Id));
+                    var nuspecPath = Path.Combine(_versionDir, Configuration, string.Format("{0}.nuspec", Id));
                     _package = new UnzippedPackage(_repositoryRoot, nuspecPath);
                 }
 

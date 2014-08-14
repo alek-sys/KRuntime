@@ -42,6 +42,7 @@ namespace Microsoft.Framework.PackageManager
         public bool NoCache { get; set; }
         public string PackageFolder { get; set; }
         public string GlobalJsonFile { get; set; }
+        public string Configuration { get; set; }
 
         public ScriptExecutor ScriptExecutor { get; private set; }
 
@@ -136,7 +137,8 @@ namespace Microsoft.Framework.PackageManager
                 new LocalWalkProvider(
                     new NuGetDependencyResolver(
                         packagesDirectory,
-                        new EmptyFrameworkResolver())));
+                        new EmptyFrameworkResolver(),
+                        Configuration)));
 
             var allSources = SourceProvider.LoadPackageSources();
 
@@ -288,9 +290,9 @@ namespace Microsoft.Framework.PackageManager
 
                     Reports.Information.WriteLine(string.Format("Installing {0} {1}", library.Name.Bold(), library.Version));
 
-                    var targetPath = packagePathResolver.GetInstallPath(library.Name, library.Version);
-                    var targetNupkg = packagePathResolver.GetPackageFilePath(library.Name, library.Version);
-                    var hashPath = packagePathResolver.GetHashPath(library.Name, library.Version);
+                    var targetPath = packagePathResolver.GetInstallPath(library.Name, library.Version, Configuration);
+                    var targetNupkg = packagePathResolver.GetPackageFilePath(library.Name, library.Version, Configuration);
+                    var hashPath = packagePathResolver.GetHashPath(library.Name, library.Version, Configuration);
 
                     // Acquire the lock on a nukpg before we extract it to prevent the race condition when multiple
                     // processes are extracting to the same destination simultaneously

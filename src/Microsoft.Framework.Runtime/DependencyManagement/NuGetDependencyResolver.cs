@@ -24,11 +24,14 @@ namespace Microsoft.Framework.Runtime
 
         private readonly IFrameworkReferenceResolver _frameworkReferenceResolver;
 
-        public NuGetDependencyResolver(string packagesPath, IFrameworkReferenceResolver frameworkReferenceResolver)
+        private readonly string _configuration;
+
+        public NuGetDependencyResolver(string packagesPath, IFrameworkReferenceResolver frameworkReferenceResolver, string configuration)
         {
             _repository = new PackageRepository(packagesPath);
             _frameworkReferenceResolver = frameworkReferenceResolver;
             Dependencies = Enumerable.Empty<LibraryDescription>();
+            _configuration = configuration;
         }
 
         public IDictionary<string, string> PackageAssemblyPaths
@@ -45,7 +48,7 @@ namespace Microsoft.Framework.Runtime
         {
             return new[]
             {
-                Path.Combine(_repository.RepositoryRoot.Root, "{name}", "{version}", "{name}.nuspec")
+                Path.Combine(_repository.RepositoryRoot.Root, "{name}", "{version}", _configuration, "{name}.nuspec")
             };
         }
 
@@ -154,29 +157,29 @@ namespace Microsoft.Framework.Runtime
             }
         }
 
-        private static string ResolvePackagePath(IPackagePathResolver defaultResolver,
+        private string ResolvePackagePath(IPackagePathResolver defaultResolver,
                                                  IEnumerable<IPackagePathResolver> cacheResolvers,
                                                  IPackage package)
         {
-            var defaultHashPath = defaultResolver.GetHashPath(package.Id, package.Version);
+            var defaultHashPath = defaultResolver.GetHashPath(package.Id, package.Version, _configuration);
 
             foreach (var resolver in cacheResolvers)
             {
-                var cacheHashFile = resolver.GetHashPath(package.Id, package.Version);
+                var cacheHashFile = resolver.GetHashPath(package.Id, package.Version, _configuration);
 
                 // REVIEW: More efficient compare?
                 if (File.Exists(defaultHashPath) &&
                     File.Exists(cacheHashFile) &&
                     File.ReadAllText(defaultHashPath) == File.ReadAllText(cacheHashFile))
                 {
-                    return resolver.GetInstallPath(package.Id, package.Version);
+                    return resolver.GetInstallPath(package.Id, package.Version, _configuration);
                 }
             }
 
-            return defaultResolver.GetInstallPath(package.Id, package.Version);
+            return defaultResolver.GetInstallPath(package.Id, package.Version, _configuration);
         }
 
-        private static IEnumerable<IPackagePathResolver> GetCacheResolvers()
+        private IEnumerable<IPackagePathResolver> GetCacheResolvers()
         {
             var packageCachePathValue = Environment.GetEnvironmentVariable("KRE_PACKAGES_CACHE");
 
@@ -325,7 +328,7 @@ namespace Microsoft.Framework.Runtime
 
         public IPackage FindCandidate(string name, SemanticVersion version)
         {
-            var packages = _repository.FindPackagesById(name);
+            var packages = _repository.FindPackagesById(name, _configuration);
 
             if (version == null)
             {

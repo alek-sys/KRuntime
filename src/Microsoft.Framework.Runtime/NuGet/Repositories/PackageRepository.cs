@@ -25,14 +25,14 @@ namespace NuGet
             }
         }
 
-        public IEnumerable<PackageInfo> FindPackagesById(string packageId)
+        public IEnumerable<PackageInfo> FindPackagesById(string packageId, string configuration)
         {
             if (String.IsNullOrEmpty(packageId))
             {
                 throw new ArgumentNullException("packageId");
             }
 
-            // packages\{packageId}\{version}\{packageId}.nuspec
+            // packages\{packageId}\{version}\{configuration}\{packageId}.nuspec
             return _cache.GetOrAdd(packageId, id =>
             {
                 var packages = new List<PackageInfo>();
@@ -57,7 +57,12 @@ namespace NuGet
                         continue;
                     }
 
-                    packages.Add(new PackageInfo(_repositoryRoot, id, version, versionDir));
+                    if (!_repositoryRoot.DirectoryExists(Path.Combine(versionDir, configuration)))
+                    {
+                        continue;
+                    }
+
+                    packages.Add(new PackageInfo(_repositoryRoot, id, version, configuration, versionDir));
                 }
 
                 return packages;
