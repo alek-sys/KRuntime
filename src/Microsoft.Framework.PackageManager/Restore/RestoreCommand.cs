@@ -299,12 +299,13 @@ namespace Microsoft.Framework.PackageManager
             {
                 var item = resolvedItems[i];
                 var lib = libsToRestore[i];
-                if (item == null || item.Match == null)
+                if (item == null || item.Match == null || item.Match.Library.Version != lib.Version)
                 {
                     missingItems.Add(lib);
-                    Reports.Information.WriteLine(string.Format("Unable to locate {0} >= {1}",
+                    Reports.Information.WriteLine(string.Format("Unable to locate {0} {1}",
                         lib.Name.Red().Bold(), lib.Version));
                     success = false;
+                    continue;
                 }
                 var isRemote = remoteProviders.Contains(item.Match.Provider);
                 var isAdded = installItems.Any(x => x.Match.Library == item.Match.Library);
